@@ -1,2 +1,7 @@
 node_modules/
-graphify-out/cache/
+dist/
+*.local
+.DS_Store
+
+# Generated codebase graph
+graphify-out/
