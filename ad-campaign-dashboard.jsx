@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { upload } from "@vercel/blob/client";
 import { formatNodeData } from "./node-data.js";
 import {
   ChevronDown,
@@ -25,8 +26,7 @@ import {
 } from "lucide-react";
 
 const STORAGE_KEY = "adops-campaigns-v1";
-// ponytail: data URLs are fine for small previews; use object storage when production-size media is needed.
-const MAX_UPLOAD_BYTES = 3_000_000;
+const MAX_UPLOAD_BYTES = import.meta.env.PROD ? 100_000_000 : 3_000_000;
 const CANVAS_WIDTH = 1110;
 const GEOMETRY = {
   campaign: { x: 52, width: 328, minHeight: 108 },
@@ -212,6 +212,17 @@ function readCreative(file) {
     reader.onerror = () => reject(reader.error || new Error("Creative could not be read"));
     reader.readAsDataURL(file);
   });
+}
+
+async function storeCreative(file) {
+  if (!import.meta.env.PROD) return readCreative(file);
+  const filename = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-") || "creative";
+  const blob = await upload(`creatives/${filename}`, file, {
+    access: "public",
+    contentType: file.type,
+    handleUploadUrl: "/api/uploads",
+  });
+  return { name: file.name, type: file.type, dataUrl: blob.url, pathname: blob.pathname };
 }
 
 const nodeFields = (item) => formatNodeData(item).slice(0, 3);
@@ -457,6 +468,7 @@ function Field({ label, children, wide = false }) {
 }
 
 function DetailsPanel({ selected, record, compact, onClose, updateCampaign, updateAdSet, updateAd, addAdSet, addAd, removeCampaign, removeAdSet, removeAd }) {
+  const [uploading, setUploading] = useState(false);
   const kind = selected?.kind;
   const item = record?.item;
   const panelTitle = kind === "campaign" ? "Campaign" : kind === "adset" ? "Ad set" : kind === "ad" ? "Ad" : "Details";
@@ -477,12 +489,18 @@ function DetailsPanel({ selected, record, compact, onClose, updateCampaign, upda
         ? file.type.startsWith("video/")
         : /^(image|video)\//.test(file.type));
     if (!valid) return window.alert(`Choose ${creativeType === "Image" ? "an image" : creativeType === "Video" ? "a video" : "images or videos"}.`);
-    if (files.reduce((size, file) => size + file.size, 0) > MAX_UPLOAD_BYTES) return window.alert("Keep creative uploads under 3 MB total in this local preview.");
+    const tooLarge = import.meta.env.PROD
+      ? files.some((file) => file.size > MAX_UPLOAD_BYTES)
+      : files.reduce((size, file) => size + file.size, 0) > MAX_UPLOAD_BYTES;
+    if (tooLarge) return window.alert(import.meta.env.PROD ? "Keep each creative under 100 MB." : "Keep creative uploads under 3 MB total in this local preview.");
+    setUploading(true);
     try {
-      updateAd({ creatives: await Promise.all(files.map(readCreative)) });
+      updateAd({ creatives: await Promise.all(files.map(storeCreative)) });
     } catch (error) {
-      console.error("Creative could not be read.", error);
-      window.alert("Creative could not be read. Try another file.");
+      console.error("Creative could not be uploaded.", error);
+      window.alert("Creative could not be uploaded. Try another file.");
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -589,7 +607,8 @@ function DetailsPanel({ selected, record, compact, onClose, updateCampaign, upda
               {conversionLocation === "Instagram" && <Field label="Instagram Handle"><input type="text" style={inputStyle} value={item.instagramHandle || ""} onChange={(event) => updateAd({ instagramHandle: event.target.value })} /></Field>}
               {(conversionLocation === "WhatsApp" || conversionLocation === "Calls") && <Field label="Mobile Number"><input type="tel" style={inputStyle} value={item.mobileNumber || ""} onChange={(event) => updateAd({ mobileNumber: event.target.value })} /></Field>}
               <Field label="Show creative">
-                <input key={`${item.id}-${creativeType}`} type="file" accept={creativeType === "Image" ? "image/*" : creativeType === "Video" ? "video/*" : "image/*,video/*"} multiple={creativeType === "Carousel"} onChange={uploadCreative} style={{ ...inputStyle, height: "auto" }} />
+                <input key={`${item.id}-${creativeType}`} type="file" accept={creativeType === "Image" ? "image/*" : creativeType === "Video" ? "video/*" : "image/*,video/*"} multiple={creativeType === "Carousel"} disabled={uploading} onChange={uploadCreative} style={{ ...inputStyle, height: "auto", opacity: uploading ? 0.65 : 1 }} />
+                {uploading && <span style={{ display: "block", marginTop: 6, color: colors.muted, fontSize: 11 }}>Uploading creative...</span>}
               </Field>
               {creatives.length > 0 && (
                 <div style={{ display: "grid", gap: 8 }}>
@@ -705,7 +724,7 @@ export default function AdCampaignDashboard({ storage = window.storage, syncStat
         await storage.set(STORAGE_KEY, JSON.stringify(campaigns), { shared: false });
       } catch (error) {
         console.error("Campaign changes could not be saved.", error);
-        window.alert("Campaign changes could not be saved. Remove large creative files and try again.");
+        window.alert("Campaign changes could not be saved. Try again.");
       }
     })();
   }, [campaigns, loaded, storage, storageWritable]);
