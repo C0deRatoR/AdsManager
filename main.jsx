@@ -1,6 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import AdCampaignDashboard from "./ad-campaign-dashboard.jsx";
+import { createCloudStorage } from "./cloud-storage.js";
 
 window.storage ||= {
   async get(key) {
@@ -11,4 +12,8 @@ window.storage ||= {
   },
 };
 
-createRoot(document.getElementById("root")).render(<AdCampaignDashboard />);
+const storage = import.meta.env.PROD ? createCloudStorage() : window.storage;
+
+createRoot(document.getElementById("root")).render(
+  <AdCampaignDashboard storage={storage} syncStatus={import.meta.env.PROD ? "Cloud storage" : "Local preview"} />,
+);

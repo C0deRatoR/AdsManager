@@ -1,7 +1,10 @@
 node_modules/
 dist/
 *.local
+.env*
+!.env.example
 .DS_Store
 
 # Generated codebase graph
 graphify-out/
+.vercel

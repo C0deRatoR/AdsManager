@@ -647,9 +647,10 @@ const dangerButtonStyle = {
   border: `1px solid ${colors.red}66`,
 };
 
-export default function AdCampaignDashboard() {
+export default function AdCampaignDashboard({ storage = window.storage, syncStatus = "Local only" }) {
   const [campaigns, setCampaigns] = useState(seedCampaigns);
   const [loaded, setLoaded] = useState(false);
+  const [storageWritable, setStorageWritable] = useState(false);
   const [compact, setCompact] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches);
   const [selected, setSelected] = useState(() => compact ? null : { kind: "campaign", campaignId: seedCampaigns[0].id });
   const [collapsedCampaigns, setCollapsedCampaigns] = useState({});
@@ -666,35 +667,48 @@ export default function AdCampaignDashboard() {
     let active = true;
     (async () => {
       try {
-        const stored = await window.storage.get(STORAGE_KEY, { shared: false });
+        const stored = await storage.get(STORAGE_KEY, { shared: false });
         const raw = stored && typeof stored === "object" && "value" in stored ? stored.value : stored;
+        if (raw == null) {
+          if (active) {
+            setCampaigns(seedCampaigns);
+            setStorageWritable(true);
+          }
+          return;
+        }
         const parsed = JSON.parse(raw);
         const valid = Array.isArray(parsed) && parsed.every(
           (campaign) => campaign && Array.isArray(campaign.adsets) && campaign.adsets.every((adset) => adset && Array.isArray(adset.ads)),
         );
         if (!valid) throw new Error("Stored campaigns do not match the campaign data model");
-        if (active) setCampaigns(parsed);
+        if (active) {
+          setCampaigns(parsed);
+          setStorageWritable(true);
+        }
       } catch (error) {
         console.warn("Campaign storage could not be read; using seed data.", error);
-        if (active) setCampaigns(seedCampaigns);
+        if (active) {
+          setCampaigns(seedCampaigns);
+          setStorageWritable(false);
+        }
       } finally {
         if (active) setLoaded(true);
       }
     })();
     return () => { active = false; };
-  }, []);
+  }, [storage]);
 
   useEffect(() => {
-    if (!loaded) return;
+    if (!loaded || !storageWritable) return;
     (async () => {
       try {
-        await window.storage.set(STORAGE_KEY, JSON.stringify(campaigns), { shared: false });
+        await storage.set(STORAGE_KEY, JSON.stringify(campaigns), { shared: false });
       } catch (error) {
         console.error("Campaign changes could not be saved.", error);
         window.alert("Campaign changes could not be saved. Remove large creative files and try again.");
       }
     })();
-  }, [campaigns, loaded]);
+  }, [campaigns, loaded, storage, storageWritable]);
 
   const commitCampaigns = (update) => {
     historyRef.current = [...historyRef.current.slice(-49), structuredClone(campaigns)];
@@ -862,6 +876,7 @@ export default function AdCampaignDashboard() {
             <span><strong style={{ color: colors.text, fontSize: 12 }}>{campaigns.length}</strong> campaigns</span>
             <span><strong style={{ color: colors.text, fontSize: 12 }}>{counts.adsets}</strong> ad sets</span>
             <span><strong style={{ color: colors.text, fontSize: 12 }}>{counts.ads}</strong> ads</span>
+            <span>{syncStatus}</span>
           </div>
         )}
         <button type="button" aria-label="New campaign" title="New campaign" onClick={addCampaign} style={{ ...primaryButtonStyle, width: compact ? 36 : undefined, padding: compact ? 0 : primaryButtonStyle.padding, flexShrink: 0 }}>

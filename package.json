@@ -6,6 +6,8 @@
     "test": "node --test"
   },
   "dependencies": {
+    "@neondatabase/serverless": "1.1.0",
+    "@vercel/functions": "3.7.5",
     "lucide-react": "^1.24.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
