@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { formatNodeData } from "./node-data.js";
 import {
   ChevronDown,
   ChevronRight,
@@ -28,9 +29,9 @@ const STORAGE_KEY = "adops-campaigns-v1";
 const MAX_UPLOAD_BYTES = 3_000_000;
 const CANVAS_WIDTH = 1110;
 const GEOMETRY = {
-  campaign: { x: 52, width: 328, height: 266 },
-  adset: { x: 468, width: 256, height: 112 },
-  ad: { x: 820, width: 236, height: 100 },
+  campaign: { x: 52, width: 328, minHeight: 108 },
+  adset: { x: 468, width: 256, minHeight: 96 },
+  ad: { x: 820, width: 236, minHeight: 96 },
 };
 
 const colors = {
@@ -213,32 +214,37 @@ function readCreative(file) {
   });
 }
 
+function nodeHeight(kind, item) {
+  return Math.max(GEOMETRY[kind].minHeight, 90 + formatNodeData(item).length * 34);
+}
+
 function buildLayout(campaigns, collapsedCampaigns, collapsedAdSets) {
   const nodes = [];
   const edges = [];
   let top = 86;
 
   campaigns.forEach((campaign) => {
+    const campaignHeight = nodeHeight("campaign", campaign);
     const campaignClosed = Boolean(collapsedCampaigns[campaign.id]);
     const groups = campaignClosed
       ? []
       : campaign.adsets.map((adset) => {
           const visibleAds = collapsedAdSets[adset.id] ? [] : adset.ads;
           const adsHeight = visibleAds.length
-            ? visibleAds.length * GEOMETRY.ad.height + (visibleAds.length - 1) * 18
+            ? visibleAds.reduce((height, ad) => height + nodeHeight("ad", ad), 0) + (visibleAds.length - 1) * 18
             : 0;
-          return { adset, visibleAds, adsHeight, height: Math.max(GEOMETRY.adset.height, adsHeight) };
+          return { adset, visibleAds, adsHeight, adsetHeight: nodeHeight("adset", adset), height: Math.max(nodeHeight("adset", adset), adsHeight) };
         });
     const childrenHeight = groups.reduce((sum, group) => sum + group.height, 0) + Math.max(0, groups.length - 1) * 26;
-    const groupHeight = Math.max(GEOMETRY.campaign.height, childrenHeight);
-    const campaignY = top + (groupHeight - GEOMETRY.campaign.height) / 2;
-    const campaignNode = { kind: "campaign", item: campaign, ...GEOMETRY.campaign, y: campaignY };
+    const groupHeight = Math.max(campaignHeight, childrenHeight);
+    const campaignY = top + (groupHeight - campaignHeight) / 2;
+    const campaignNode = { kind: "campaign", item: campaign, ...GEOMETRY.campaign, height: campaignHeight, y: campaignY };
     nodes.push(campaignNode);
 
     let groupTop = top + (groupHeight - childrenHeight) / 2;
-    groups.forEach(({ adset, visibleAds, adsHeight, height }) => {
-      const adsetY = groupTop + (height - GEOMETRY.adset.height) / 2;
-      const adsetNode = { kind: "adset", item: adset, campaignId: campaign.id, ...GEOMETRY.adset, y: adsetY };
+    groups.forEach(({ adset, visibleAds, adsHeight, adsetHeight, height }) => {
+      const adsetY = groupTop + (height - adsetHeight) / 2;
+      const adsetNode = { kind: "adset", item: adset, campaignId: campaign.id, ...GEOMETRY.adset, height: adsetHeight, y: adsetY };
       nodes.push(adsetNode);
       edges.push({
         key: `campaign-${campaign.id}-${adset.id}`,
@@ -248,14 +254,15 @@ function buildLayout(campaigns, collapsedCampaigns, collapsedAdSets) {
 
       let adTop = groupTop + (height - adsHeight) / 2;
       visibleAds.forEach((ad) => {
-        const adNode = { kind: "ad", item: ad, campaignId: campaign.id, adsetId: adset.id, ...GEOMETRY.ad, y: adTop };
+        const height = nodeHeight("ad", ad);
+        const adNode = { kind: "ad", item: ad, campaignId: campaign.id, adsetId: adset.id, ...GEOMETRY.ad, height, y: adTop };
         nodes.push(adNode);
         edges.push({
           key: `adset-${adset.id}-${ad.id}`,
           from: [adsetNode.x + adsetNode.width, adsetNode.y + adsetNode.height / 2],
           to: [adNode.x, adNode.y + adNode.height / 2],
         });
-        adTop += GEOMETRY.ad.height + 18;
+        adTop += height + 18;
       });
       groupTop += height + 26;
     });
@@ -387,157 +394,34 @@ function Toolbar({ children }) {
   );
 }
 
-function CampaignNode({ node, selected, collapsed, actions }) {
-  const campaign = node.item;
-  const starts = campaign.adsets.map((adset) => adset.startDate ?? campaign.startDate).filter(Boolean).sort();
-  const ends = campaign.adsets.map((adset) => adset.endDate ?? campaign.endDate).filter(Boolean).sort();
-  const startDate = starts[0] || (campaign.adsets.some((adset) => adset.startDate !== undefined) ? "" : campaign.startDate);
-  const endDate = ends.at(-1) || (campaign.adsets.some((adset) => adset.endDate !== undefined) ? "" : campaign.endDate);
-  const state = liveState(startDate, endDate);
-  const progress = timelinePercent(startDate, endDate);
-  const sheetUrl = /^https?:\/\//i.test(campaign.sheetLink || "") ? campaign.sheetLink : null;
-  const audience = `${campaign.ageMin || "?"}-${Number(campaign.ageMax) === 65 ? "65+" : campaign.ageMax || "?"} · ${campaign.gender || "All"}`;
-
-  return (
-    <NodeShell node={node} selected={selected} onSelect={actions.select}>
-      <div style={{ padding: "13px 14px 12px", height: "100%", boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 9 }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, minWidth: 0 }}>
-          <div style={{ width: 34, height: 34, borderRadius: 7, display: "grid", placeItems: "center", background: "#43251f", color: colors.accent, flexShrink: 0 }}>
-            <Megaphone size={18} />
-          </div>
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <div style={{ color: colors.faint, fontSize: 10, lineHeight: "13px", textTransform: "uppercase" }}>Campaign</div>
-            <div title={campaign.name} style={{ fontSize: 14, lineHeight: "18px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {campaign.name || "Untitled campaign"}
-            </div>
-          </div>
-          <Toolbar>
-            <IconButton label="Edit campaign" onClick={actions.select}><Pencil size={14} /></IconButton>
-            <IconButton label="Add ad set" onClick={actions.add}><Plus size={15} /></IconButton>
-            <IconButton label={collapsed ? "Expand campaign" : "Collapse campaign"} onClick={actions.toggle}>
-              {collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
-            </IconButton>
-            <IconButton label="Delete campaign" danger onClick={actions.remove}><Trash2 size={14} /></IconButton>
-          </Toolbar>
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          <span style={{ color: colors.muted, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {formatDate(startDate)} - {formatDate(endDate)}
-          </span>
-          <span style={{ ...stateStyle(state), padding: "3px 6px", borderRadius: 5, fontSize: 9, lineHeight: "11px", fontWeight: 800, flexShrink: 0 }}>
-            {state}
-          </span>
-        </div>
-
-        <div aria-label={`${progress}% of campaign timeline elapsed`} style={{ height: 5, background: "#343530", borderRadius: 3, overflow: "hidden" }}>
-          <div style={{ width: `${progress}%`, height: "100%", background: state === "ENDED" ? colors.red : state === "SCHEDULED" ? colors.yellow : colors.green, borderRadius: 3 }} />
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-          <NodeMeta icon={<Users size={13} />} label="Audience" value={audience} />
-          <NodeMeta icon={<MapPin size={13} />} label="Location" value={campaign.location || "Not set"} />
-          <NodeMeta icon={<CircleDollarSign size={13} />} label="Budget" value={formatBudget(campaign.budget, campaign.currency)} />
-          <NodeMeta icon={<MousePointerClick size={13} />} label="Destination" value={destinationLabels[campaign.destination] || "Other"} />
-        </div>
-
-        <div style={{ minHeight: 31, display: "flex", alignItems: "flex-start", gap: 7, color: colors.muted, fontSize: 11, lineHeight: "15px" }}>
-          <Zap size={13} color={colors.yellow} style={{ marginTop: 1, flexShrink: 0 }} />
-          <span style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-            {campaign.testingNote || "No active test noted"}
-          </span>
-        </div>
-
-        {campaign.destination === "lead_form" && (
-          <div style={{ height: 20, display: "flex", alignItems: "center" }}>
-            {sheetUrl ? (
-              <a
-                href={sheetUrl}
-                target="_blank"
-                rel="noreferrer"
-                onClick={(event) => event.stopPropagation()}
-                style={{ display: "inline-flex", alignItems: "center", gap: 6, color: colors.blue, fontSize: 11, textDecoration: "none" }}
-              >
-                <Link2 size={13} /> Google Sheet <ExternalLink size={11} />
-              </a>
-            ) : (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: colors.faint, fontSize: 11 }}><Link2 size={13} /> Sheet link not set</span>
-            )}
-          </div>
-        )}
-      </div>
-    </NodeShell>
-  );
+function NodeFields({ item }) {
+  return <div style={{ display: "grid", gap: 5 }}>{formatNodeData(item).map(({ label, value }) => <div key={label} style={{ minWidth: 0, padding: "5px 7px", background: "#1b1c19", border: "1px solid #30312d", borderRadius: 6 }}><div style={{ color: colors.faint, fontSize: 8, lineHeight: "10px", textTransform: "uppercase" }}>{label}</div><div title={value} style={{ color: colors.text, fontSize: 10, lineHeight: "13px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</div></div>)}</div>;
 }
 
-function NodeMeta({ icon, label, value }) {
-  return (
-    <div style={{ minWidth: 0, height: 35, padding: "5px 7px", boxSizing: "border-box", background: "#1b1c19", border: "1px solid #30312d", borderRadius: 6, display: "flex", alignItems: "center", gap: 6 }}>
-      <span style={{ color: colors.faint, flexShrink: 0 }}>{icon}</span>
-      <span style={{ minWidth: 0 }}>
-        <span style={{ display: "block", color: colors.faint, fontSize: 8, lineHeight: "10px", textTransform: "uppercase" }}>{label}</span>
-        <span title={value} style={{ display: "block", color: colors.text, fontSize: 10, lineHeight: "13px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</span>
-      </span>
+function NodeCard({ node, selected, actions, icon, label, fallbackName, status }) {
+  return <NodeShell node={node} selected={selected} onSelect={actions.select}>
+    <div style={{ padding: 12, height: "100%", boxSizing: "border-box", display: "grid", alignContent: "start", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 9, minWidth: 0 }}>
+        {icon}<div style={{ minWidth: 0, flex: 1 }}><div style={{ color: colors.faint, fontSize: 9, lineHeight: "11px", textTransform: "uppercase" }}>{label}</div><div title={node.item.name} style={{ marginTop: 2, fontSize: 13, lineHeight: "17px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{node.item.name || fallbackName}</div></div><Toolbar>{actions.children}</Toolbar>
+      </div>
+      <NodeFields item={node.item} />
+      {status}
     </div>
-  );
+  </NodeShell>;
+}
+
+function CampaignNode({ node, selected, collapsed, actions }) {
+  const state = liveState(node.item.startDate, node.item.endDate);
+  return <NodeCard node={node} selected={selected} actions={{ ...actions, children: <><IconButton label="Edit campaign" onClick={actions.select}><Pencil size={14} /></IconButton><IconButton label="Add ad set" onClick={actions.add}><Plus size={15} /></IconButton><IconButton label={collapsed ? "Expand campaign" : "Collapse campaign"} onClick={actions.toggle}>{collapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}</IconButton><IconButton label="Delete campaign" danger onClick={actions.remove}><Trash2 size={14} /></IconButton></> }} icon={<div style={{ width: 31, height: 31, borderRadius: 6, display: "grid", placeItems: "center", background: "#43251f", color: colors.accent, flexShrink: 0 }}><Megaphone size={17} /></div>} label="Campaign" fallbackName="Untitled campaign" status={<span style={{ ...stateStyle(state), justifySelf: "start", padding: "3px 6px", borderRadius: 5, fontSize: 9, lineHeight: "11px", fontWeight: 800 }}>{state}</span>} />;
 }
 
 function AdSetNode({ node, selected, collapsed, actions }) {
-  const adset = node.item;
-  const startDate = adset.startDate ?? node.startDate;
-  const endDate = adset.endDate ?? node.endDate;
-  const state = liveState(startDate, endDate);
-  const status = state[0] + state.slice(1).toLowerCase();
-  return (
-    <NodeShell node={node} selected={selected} onSelect={actions.select}>
-      <div style={{ height: "100%", padding: 12, boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 9, minWidth: 0 }}>
-          <div style={{ width: 31, height: 31, borderRadius: 6, display: "grid", placeItems: "center", background: "#1f3445", color: colors.blue, flexShrink: 0 }}><Layers3 size={17} /></div>
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <div style={{ color: colors.faint, fontSize: 9, lineHeight: "11px", textTransform: "uppercase" }}>Ad set</div>
-            <div title={adset.name} style={{ marginTop: 2, fontSize: 13, lineHeight: "17px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{adset.name || "Untitled ad set"}</div>
-          </div>
-          <Toolbar>
-            <IconButton label="Edit ad set" onClick={actions.select}><Pencil size={13} /></IconButton>
-            <IconButton label="Add ad" onClick={actions.add}><Plus size={14} /></IconButton>
-            <IconButton label={collapsed ? "Expand ad set" : "Collapse ad set"} onClick={actions.toggle}>{collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}</IconButton>
-            <IconButton label="Delete ad set" danger onClick={actions.remove}><Trash2 size={13} /></IconButton>
-          </Toolbar>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          <span style={{ color: colors.muted, fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{formatDate(startDate)} - {formatDate(endDate)}</span>
-          <StatusDot active={state === "ACTIVE"} label={status} />
-        </div>
-      </div>
-    </NodeShell>
-  );
+  const state = liveState(node.item.startDate ?? node.startDate, node.item.endDate ?? node.endDate);
+  return <NodeCard node={node} selected={selected} actions={{ ...actions, children: <><IconButton label="Edit ad set" onClick={actions.select}><Pencil size={13} /></IconButton><IconButton label="Add ad" onClick={actions.add}><Plus size={14} /></IconButton><IconButton label={collapsed ? "Expand ad set" : "Collapse ad set"} onClick={actions.toggle}>{collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}</IconButton><IconButton label="Delete ad set" danger onClick={actions.remove}><Trash2 size={13} /></IconButton></> }} icon={<div style={{ width: 31, height: 31, borderRadius: 6, display: "grid", placeItems: "center", background: "#1f3445", color: colors.blue, flexShrink: 0 }}><Layers3 size={17} /></div>} label="Ad set" fallbackName="Untitled ad set" status={<StatusDot active={state === "ACTIVE"} label={state[0] + state.slice(1).toLowerCase()} />} />;
 }
 
 function AdNode({ node, selected, actions }) {
-  const ad = node.item;
-  const active = ad.status === "Active";
-  const creativeType = ad.creativeType === "Reel" ? "Video" : ad.creativeType || "Image";
-  return (
-    <NodeShell node={node} selected={selected} onSelect={actions.select}>
-      <div style={{ height: "100%", padding: 12, boxSizing: "border-box", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 9, minWidth: 0 }}>
-          <div style={{ width: 31, height: 31, borderRadius: 6, display: "grid", placeItems: "center", background: "#352b42", color: "#c49cff", flexShrink: 0 }}><FileImage size={17} /></div>
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <div style={{ color: colors.faint, fontSize: 9, lineHeight: "11px", textTransform: "uppercase" }}>Ad</div>
-            <div title={ad.name} style={{ marginTop: 2, fontSize: 13, lineHeight: "17px", fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ad.name || "Untitled ad"}</div>
-          </div>
-          <Toolbar>
-            <IconButton label="Edit ad" onClick={actions.select}><Pencil size={13} /></IconButton>
-            <IconButton label="Delete ad" danger onClick={actions.remove}><Trash2 size={13} /></IconButton>
-          </Toolbar>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: colors.muted, fontSize: 11 }}><CreativeIcon type={creativeType} /> {creativeType}</span>
-          <StatusDot active={active} label={ad.status} />
-        </div>
-      </div>
-    </NodeShell>
-  );
+  return <NodeCard node={node} selected={selected} actions={{ ...actions, children: <><IconButton label="Edit ad" onClick={actions.select}><Pencil size={13} /></IconButton><IconButton label="Delete ad" danger onClick={actions.remove}><Trash2 size={13} /></IconButton></> }} icon={<div style={{ width: 31, height: 31, borderRadius: 6, display: "grid", placeItems: "center", background: "#352b42", color: "#c49cff", flexShrink: 0 }}><FileImage size={17} /></div>} label="Ad" fallbackName="Untitled ad" status={<StatusDot active={node.item.status === "Active"} label={node.item.status} />} />;
 }
 
 function StatusDot({ active, label }) {
@@ -774,6 +658,7 @@ export default function AdCampaignDashboard() {
   const canvasRef = useRef(null);
   const panRef = useRef(null);
   const ignoreClickRef = useRef(false);
+  const historyRef = useRef([]);
 
   useEffect(() => {
     let active = true;
@@ -809,6 +694,24 @@ export default function AdCampaignDashboard() {
     })();
   }, [campaigns, loaded]);
 
+  const commitCampaigns = (update) => {
+    historyRef.current = [...historyRef.current.slice(-49), structuredClone(campaigns)];
+    setCampaigns((items) => typeof update === "function" ? update(items) : update);
+  };
+
+  useEffect(() => {
+    const undo = (event) => {
+      if ((!event.ctrlKey && !event.metaKey) || event.key.toLowerCase() !== "z" || event.shiftKey) return;
+      if (event.target?.closest?.("input, textarea, select, [contenteditable='true']")) return;
+      const previous = historyRef.current.pop();
+      if (!previous) return;
+      event.preventDefault();
+      setCampaigns(previous);
+    };
+    window.addEventListener("keydown", undo);
+    return () => window.removeEventListener("keydown", undo);
+  }, []);
+
   useEffect(() => {
     const media = window.matchMedia("(max-width: 900px)");
     const sync = () => setCompact(media.matches);
@@ -831,20 +734,20 @@ export default function AdCampaignDashboard() {
     if (!campaigns.length && selected) setSelected(null);
   }, [campaigns, loaded, record, selected]);
 
-  const updateCampaign = (patch) => setCampaigns((items) => items.map((campaign) => campaign.id === selected.campaignId ? { ...campaign, ...patch } : campaign));
-  const updateAdSet = (patch) => setCampaigns((items) => items.map((campaign) => campaign.id === selected.campaignId ? { ...campaign, adsets: campaign.adsets.map((adset) => adset.id === selected.adsetId ? { ...adset, ...patch } : adset) } : campaign));
-  const updateAd = (patch) => setCampaigns((items) => items.map((campaign) => campaign.id === selected.campaignId ? { ...campaign, adsets: campaign.adsets.map((adset) => adset.id === selected.adsetId ? { ...adset, ads: adset.ads.map((ad) => ad.id === selected.adId ? { ...ad, ...patch } : ad) } : adset) } : campaign));
+  const updateCampaign = (patch) => commitCampaigns((items) => items.map((campaign) => campaign.id === selected.campaignId ? { ...campaign, ...patch } : campaign));
+  const updateAdSet = (patch) => commitCampaigns((items) => items.map((campaign) => campaign.id === selected.campaignId ? { ...campaign, adsets: campaign.adsets.map((adset) => adset.id === selected.adsetId ? { ...adset, ...patch } : adset) } : campaign));
+  const updateAd = (patch) => commitCampaigns((items) => items.map((campaign) => campaign.id === selected.campaignId ? { ...campaign, adsets: campaign.adsets.map((adset) => adset.id === selected.adsetId ? { ...adset, ads: adset.ads.map((ad) => ad.id === selected.adId ? { ...ad, ...patch } : ad) } : adset) } : campaign));
 
   const addCampaign = () => {
     const campaign = newCampaign();
-    setCampaigns((items) => [...items, campaign]);
+    commitCampaigns((items) => [...items, campaign]);
     setSelected({ kind: "campaign", campaignId: campaign.id });
   };
 
   const addAdSet = (campaignId = selected?.campaignId) => {
     if (!campaignId) return;
     const adset = newAdSet();
-    setCampaigns((items) => items.map((campaign) => campaign.id === campaignId ? { ...campaign, adsets: [...campaign.adsets, adset] } : campaign));
+    commitCampaigns((items) => items.map((campaign) => campaign.id === campaignId ? { ...campaign, adsets: [...campaign.adsets, adset] } : campaign));
     setCollapsedCampaigns((items) => ({ ...items, [campaignId]: false }));
     setSelected({ kind: "adset", campaignId, adsetId: adset.id });
   };
@@ -852,7 +755,7 @@ export default function AdCampaignDashboard() {
   const addAd = (campaignId = selected?.campaignId, adsetId = selected?.adsetId) => {
     if (!campaignId || !adsetId) return;
     const ad = newAd();
-    setCampaigns((items) => items.map((campaign) => campaign.id === campaignId ? { ...campaign, adsets: campaign.adsets.map((adset) => adset.id === adsetId ? { ...adset, ads: [...adset.ads, ad] } : adset) } : campaign));
+    commitCampaigns((items) => items.map((campaign) => campaign.id === campaignId ? { ...campaign, adsets: campaign.adsets.map((adset) => adset.id === adsetId ? { ...adset, ads: [...adset.ads, ad] } : adset) } : campaign));
     setCollapsedCampaigns((items) => ({ ...items, [campaignId]: false }));
     setCollapsedAdSets((items) => ({ ...items, [adsetId]: false }));
     setSelected({ kind: "ad", campaignId, adsetId, adId: ad.id });
@@ -861,19 +764,19 @@ export default function AdCampaignDashboard() {
   const removeCampaign = (campaignId = selected?.campaignId) => {
     if (!campaignId || !window.confirm("Delete this campaign and all of its ad sets and ads?")) return;
     const next = campaigns.filter((campaign) => campaign.id !== campaignId);
-    setCampaigns(next);
+    commitCampaigns(next);
     setSelected(next[0] ? { kind: "campaign", campaignId: next[0].id } : null);
   };
 
   const removeAdSet = (campaignId = selected?.campaignId, adsetId = selected?.adsetId) => {
     if (!campaignId || !adsetId || !window.confirm("Delete this ad set and all of its ads?")) return;
-    setCampaigns((items) => items.map((campaign) => campaign.id === campaignId ? { ...campaign, adsets: campaign.adsets.filter((adset) => adset.id !== adsetId) } : campaign));
+    commitCampaigns((items) => items.map((campaign) => campaign.id === campaignId ? { ...campaign, adsets: campaign.adsets.filter((adset) => adset.id !== adsetId) } : campaign));
     setSelected({ kind: "campaign", campaignId });
   };
 
   const removeAd = (campaignId = selected?.campaignId, adsetId = selected?.adsetId, adId = selected?.adId) => {
     if (!campaignId || !adsetId || !adId || !window.confirm("Delete this ad?")) return;
-    setCampaigns((items) => items.map((campaign) => campaign.id === campaignId ? { ...campaign, adsets: campaign.adsets.map((adset) => adset.id === adsetId ? { ...adset, ads: adset.ads.filter((ad) => ad.id !== adId) } : adset) } : campaign));
+    commitCampaigns((items) => items.map((campaign) => campaign.id === campaignId ? { ...campaign, adsets: campaign.adsets.map((adset) => adset.id === adsetId ? { ...adset, ads: adset.ads.filter((ad) => ad.id !== adId) } : adset) } : campaign));
     setSelected({ kind: "adset", campaignId, adsetId });
   };
 
