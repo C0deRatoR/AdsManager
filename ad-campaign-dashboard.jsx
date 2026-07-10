@@ -214,8 +214,10 @@ function readCreative(file) {
   });
 }
 
+const nodeFields = (item) => formatNodeData(item).slice(0, 3);
+
 function nodeHeight(kind, item) {
-  return Math.max(GEOMETRY[kind].minHeight, 90 + formatNodeData(item).length * 34);
+  return Math.max(GEOMETRY[kind].minHeight, 98 + nodeFields(item).length * 34);
 }
 
 function buildLayout(campaigns, collapsedCampaigns, collapsedAdSets) {
@@ -395,7 +397,7 @@ function Toolbar({ children }) {
 }
 
 function NodeFields({ item }) {
-  return <div style={{ display: "grid", gap: 5 }}>{formatNodeData(item).map(({ label, value }) => <div key={label} style={{ minWidth: 0, padding: "5px 7px", background: "#1b1c19", border: "1px solid #30312d", borderRadius: 6 }}><div style={{ color: colors.faint, fontSize: 8, lineHeight: "10px", textTransform: "uppercase" }}>{label}</div><div title={value} style={{ color: colors.text, fontSize: 10, lineHeight: "13px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</div></div>)}</div>;
+  return <div style={{ display: "grid", gap: 5 }}>{nodeFields(item).map(({ label, value }) => <div key={label} style={{ minWidth: 0, padding: "5px 7px", background: "#1b1c19", border: "1px solid #30312d", borderRadius: 6 }}><div style={{ color: colors.faint, fontSize: 8, lineHeight: "10px", textTransform: "uppercase" }}>{label}</div><div title={value} style={{ color: colors.text, fontSize: 10, lineHeight: "13px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</div></div>)}</div>;
 }
 
 function NodeCard({ node, selected, actions, icon, label, fallbackName, status }) {
