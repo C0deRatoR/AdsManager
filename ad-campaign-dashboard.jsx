@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { upload } from "@vercel/blob/client";
+import { parseBackup, serializeBackup, validCampaigns } from "./backups.js";
 import { formatNodeData } from "./node-data.js";
 import {
   ChevronDown,
   ChevronRight,
   CircleDollarSign,
+  Download,
   ExternalLink,
   FileImage,
   GalleryHorizontalEnd,
@@ -19,6 +21,7 @@ import {
   Pencil,
   Plus,
   Trash2,
+  Upload as UploadIcon,
   Users,
   Video,
   X,
@@ -26,7 +29,9 @@ import {
 } from "lucide-react";
 
 const STORAGE_KEY = "adops-campaigns-v1";
-const MAX_UPLOAD_BYTES = import.meta.env.PROD ? 100_000_000 : 3_000_000;
+const LOCAL_STORAGE_MODE = import.meta.env.VITE_STORAGE_MODE === "local" || !import.meta.env.PROD;
+const MAX_UPLOAD_BYTES = LOCAL_STORAGE_MODE ? 3_000_000 : 100_000_000;
+const MAX_BACKUP_BYTES = 5_000_000;
 const CANVAS_WIDTH = 1110;
 const GEOMETRY = {
   campaign: { x: 52, width: 328, minHeight: 108 },
@@ -73,62 +78,38 @@ function localDateOffset(days) {
 
 const seedCampaigns = [
   {
-    id: "campaign-imperio-leads",
-    name: "Imperio Railing - Lead Generation",
-    objective: "Leads",
-    startDate: localDateOffset(-7),
-    endDate: localDateOffset(21),
-    ageMin: 28,
-    ageMax: 60,
+    id: "campaign-northstar-summer",
+    name: "Northstar Coffee - Summer Launch",
+    objective: "Awareness",
+    startDate: localDateOffset(-3),
+    endDate: localDateOffset(27),
+    ageMin: 21,
+    ageMax: 55,
     gender: "All",
-    location: "Delhi NCR",
-    budget: 2500,
-    currency: "INR",
-    destination: "lead_form",
-    sheetLink: "https://docs.google.com/spreadsheets/",
-    testingNote: "Testing homeowner audience against lookalike",
-    adsets: [
-      {
-        id: "adset-homeowners",
-        name: "Homeowners - Delhi NCR",
-        budget: 1500,
-        status: "Active",
-        ads: [
-          { id: "ad-balcony-video", name: "Balcony Transformation", status: "Active", creativeType: "Video" },
-          { id: "ad-proof-carousel", name: "Installations & Proof", status: "Active", creativeType: "Carousel" },
-        ],
-      },
-      {
-        id: "adset-lookalike",
-        name: "Lead Lookalike 2%",
-        budget: 1000,
-        status: "Active",
-        ads: [{ id: "ad-safety-image", name: "Safety First", status: "Paused", creativeType: "Image" }],
-      },
-    ],
-  },
-  {
-    id: "campaign-consulting",
-    name: "Consulting - Discovery Calls",
-    objective: "Leads",
-    startDate: localDateOffset(5),
-    endDate: localDateOffset(35),
-    ageMin: 24,
-    ageMax: 50,
-    gender: "All",
-    location: "India",
-    budget: 1200,
-    currency: "INR",
+    location: "Portland, OR",
+    budget: 80,
+    currency: "USD",
     destination: "website",
     sheetLink: "",
-    testingNote: "Testing founder-led reel against static offer",
+    testingNote: "Compare product photography with a customer story",
     adsets: [
       {
-        id: "adset-founders",
-        name: "Founders & Operators",
-        budget: 1200,
-        status: "Paused",
-        ads: [{ id: "ad-founder-reel", name: "Founder Story", status: "Paused", creativeType: "Video" }],
+        id: "adset-local-coffee-fans",
+        name: "Local coffee fans",
+        conversionLocation: "Website",
+        startDate: localDateOffset(-3),
+        endDate: localDateOffset(27),
+        location: "Portland, OR",
+        ageMin: 21,
+        ageMax: 55,
+        gender: "All",
+        detailedTargeting: "Coffee, local food, independent shops",
+        device: "All Devices",
+        platforms: ["Facebook", "Instagram"],
+        status: "Active",
+        ads: [
+          { id: "ad-summer-blend", name: "Meet the summer blend", status: "Active", creativeType: "Image", destinationUrl: "https://example.com/summer", creatives: [] },
+        ],
       },
     ],
   },
@@ -215,7 +196,7 @@ function readCreative(file) {
 }
 
 async function storeCreative(file) {
-  if (!import.meta.env.PROD) return readCreative(file);
+  if (LOCAL_STORAGE_MODE) return readCreative(file);
   const filename = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-") || "creative";
   const blob = await upload(`creatives/${filename}`, file, {
     access: "public",
@@ -489,10 +470,10 @@ function DetailsPanel({ selected, record, compact, onClose, updateCampaign, upda
         ? file.type.startsWith("video/")
         : /^(image|video)\//.test(file.type));
     if (!valid) return window.alert(`Choose ${creativeType === "Image" ? "an image" : creativeType === "Video" ? "a video" : "images or videos"}.`);
-    const tooLarge = import.meta.env.PROD
-      ? files.some((file) => file.size > MAX_UPLOAD_BYTES)
-      : files.reduce((size, file) => size + file.size, 0) > MAX_UPLOAD_BYTES;
-    if (tooLarge) return window.alert(import.meta.env.PROD ? "Keep each creative under 100 MB." : "Keep creative uploads under 3 MB total in this local preview.");
+    const tooLarge = LOCAL_STORAGE_MODE
+      ? files.reduce((size, file) => size + file.size, 0) > MAX_UPLOAD_BYTES
+      : files.some((file) => file.size > MAX_UPLOAD_BYTES);
+    if (tooLarge) return window.alert(LOCAL_STORAGE_MODE ? "Keep creative uploads under 3 MB total in browser storage." : "Keep each creative under 100 MB.");
     setUploading(true);
     try {
       updateAd({ creatives: await Promise.all(files.map(storeCreative)) });
@@ -659,6 +640,13 @@ const primaryButtonStyle = {
   cursor: "pointer",
 };
 
+const secondaryButtonStyle = {
+  ...primaryButtonStyle,
+  color: colors.text,
+  background: "transparent",
+  border: `1px solid ${colors.border}`,
+};
+
 const dangerButtonStyle = {
   ...primaryButtonStyle,
   color: colors.red,
@@ -679,6 +667,7 @@ export default function AdCampaignDashboard({ storage = window.storage, syncStat
   const [panning, setPanning] = useState(false);
   const canvasRef = useRef(null);
   const panRef = useRef(null);
+  const importRef = useRef(null);
   const ignoreClickRef = useRef(false);
   const historyRef = useRef([]);
 
@@ -696,10 +685,7 @@ export default function AdCampaignDashboard({ storage = window.storage, syncStat
           return;
         }
         const parsed = JSON.parse(raw);
-        const valid = Array.isArray(parsed) && parsed.every(
-          (campaign) => campaign && Array.isArray(campaign.adsets) && campaign.adsets.every((adset) => adset && Array.isArray(adset.ads)),
-        );
-        if (!valid) throw new Error("Stored campaigns do not match the campaign data model");
+        if (!validCampaigns(parsed)) throw new Error("Stored campaigns do not match the campaign data model");
         if (active) {
           setCampaigns(parsed);
           setStorageWritable(true);
@@ -827,6 +813,30 @@ export default function AdCampaignDashboard({ storage = window.storage, syncStat
     if (closing && selected?.adsetId === adsetId && selected.kind === "ad") setSelected({ kind: "adset", campaignId, adsetId });
   };
 
+  const exportBackup = () => {
+    const url = URL.createObjectURL(new Blob([serializeBackup(campaigns)], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `ad-campaign-dashboard-${todayIso()}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importBackup = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      if (file.size > MAX_BACKUP_BYTES) throw new Error("This backup is too large for browser storage.");
+      const imported = parseBackup(await file.text());
+      if (!window.confirm("Replace the current workspace with this backup?")) return;
+      commitCampaigns(imported);
+      setSelected(imported[0] ? { kind: "campaign", campaignId: imported[0].id } : null);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "This backup could not be imported.");
+    }
+  };
+
   const startPan = (event) => {
     if (event.button !== 0 || event.target.closest("button, a, input, select, textarea")) return;
     panRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, viewX: view.x, viewY: view.y, moved: false };
@@ -885,8 +895,8 @@ export default function AdCampaignDashboard({ storage = window.storage, syncStat
         <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: compact ? 1 : undefined }}>
           <div style={{ width: 34, height: 34, borderRadius: 7, display: "grid", placeItems: "center", color: colors.text, background: colors.accent, flexShrink: 0 }}><Megaphone size={18} /></div>
           <div style={{ minWidth: 0 }}>
-            <h1 style={{ margin: 0, fontSize: compact ? 14 : 15, lineHeight: "19px", fontWeight: 750, whiteSpace: "nowrap" }}>Campaign Control Room</h1>
-            {!compact && <div style={{ color: colors.faint, fontSize: 10, lineHeight: "13px" }}>Meta ad workflow</div>}
+            <h1 style={{ margin: 0, fontSize: compact ? 14 : 15, lineHeight: "19px", fontWeight: 750, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Ad Campaign Dashboard</h1>
+            {!compact && <div style={{ color: colors.faint, fontSize: 10, lineHeight: "13px" }}>Manual Meta campaign planning</div>}
           </div>
         </div>
         {!compact && <div style={{ height: 26, width: 1, background: colors.border, flexShrink: 0 }} />}
@@ -898,6 +908,13 @@ export default function AdCampaignDashboard({ storage = window.storage, syncStat
             <span>{syncStatus}</span>
           </div>
         )}
+        <button type="button" aria-label="Export backup" title="Export backup" onClick={exportBackup} style={{ ...secondaryButtonStyle, width: compact ? 36 : undefined, padding: compact ? 0 : secondaryButtonStyle.padding, flexShrink: 0 }}>
+          <Download size={15} /> {!compact && "Export backup"}
+        </button>
+        <button type="button" aria-label="Import backup" title="Import backup" onClick={() => importRef.current?.click()} style={{ ...secondaryButtonStyle, width: compact ? 36 : undefined, padding: compact ? 0 : secondaryButtonStyle.padding, flexShrink: 0 }}>
+          <UploadIcon size={15} /> {!compact && "Import backup"}
+        </button>
+        <input ref={importRef} type="file" accept="application/json,.json" onChange={importBackup} hidden />
         <button type="button" aria-label="New campaign" title="New campaign" onClick={addCampaign} style={{ ...primaryButtonStyle, width: compact ? 36 : undefined, padding: compact ? 0 : primaryButtonStyle.padding, flexShrink: 0 }}>
           <Plus size={15} /> {!compact && "New campaign"}
         </button>
